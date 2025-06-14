@@ -67,17 +67,11 @@ class PlayerStatsScraper:
             # Extract player stats from main table
             player_stats = self._extract_player_stats_table(soup, progress_callback)
 
-            # Extract additional metrics if available
-            additional_stats = self._extract_additional_stats(soup)
 
-            # Calculate team statistics
-            team_stats = self._calculate_team_stats(player_stats)
 
             result = {
                 'players': player_stats,  # Changed from 'player_stats' to 'players' to match UI expectations
                 'player_stats': player_stats,  # Keep both for compatibility
-                'additional_stats': additional_stats,
-                'team_stats': team_stats,
                 'total_players': len(player_stats),
                 'scraped_from': stats_url,
                 'scraped_at': datetime.now().isoformat()
@@ -403,90 +397,6 @@ class PlayerStatsScraper:
             return text if text else '0'
         except:
             return '0'
-
-    def _extract_additional_stats(self, soup: BeautifulSoup) -> Dict[str, Any]:
-        """Extract additional statistics and metrics"""
-        try:
-            additional_stats = {}
-
-            # Look for additional stat tables or sections
-            stat_sections = soup.find_all(['div', 'section'], class_=re.compile(r'stats|metrics'))
-
-            for section in stat_sections:
-                # Extract section title
-                title_elem = section.find(['h1', 'h2', 'h3', 'h4'])
-                if title_elem:
-                    section_title = title_elem.get_text(strip=True)
-
-                    # Extract stats from this section
-                    section_stats = []
-                    stat_rows = section.find_all('tr')
-
-                    for row in stat_rows[1:]:  # Skip header
-                        cells = row.find_all(['td', 'th'])
-                        if len(cells) >= 2:
-                            stat_name = cells[0].get_text(strip=True)
-                            stat_value = cells[1].get_text(strip=True)
-                            section_stats.append({
-                                'name': stat_name,
-                                'value': stat_value
-                            })
-
-                    if section_stats:
-                        additional_stats[section_title] = section_stats
-
-            return additional_stats
-
-        except Exception:
-            return {}
-
-    def _calculate_team_stats(self, player_stats: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        """Calculate team-level statistics from player data"""
-        try:
-            team_stats = {}
-
-            for player in player_stats:
-                team = player.get('team', 'Unknown')
-                if team == 'Unknown':
-                    continue
-
-                if team not in team_stats:
-                    team_stats[team] = {
-                        'player_count': 0,
-                        'total_acs': 0,
-                        'total_kills': 0,
-                        'total_deaths': 0,
-                        'total_assists': 0,
-                        'avg_acs': 0,
-                        'avg_kd': 0,
-                        'avg_rating': 0
-                    }
-
-                # Accumulate stats
-                team_stats[team]['player_count'] += 1
-
-                try:
-                    team_stats[team]['total_acs'] += float(player.get('acs', '0'))
-                    team_stats[team]['total_kills'] += float(player.get('kills', '0'))
-                    team_stats[team]['total_deaths'] += float(player.get('deaths', '0'))
-                    team_stats[team]['total_assists'] += float(player.get('assists', '0'))
-                except (ValueError, TypeError):
-                    pass
-
-            # Calculate averages
-            for team, stats in team_stats.items():
-                if stats['player_count'] > 0:
-                    stats['avg_acs'] = round(stats['total_acs'] / stats['player_count'], 1)
-
-                    if stats['total_deaths'] > 0:
-                        stats['avg_kd'] = round(stats['total_kills'] / stats['total_deaths'], 2)
-                    else:
-                        stats['avg_kd'] = float('inf') if stats['total_kills'] > 0 else 0
-
-            return team_stats
-
-        except Exception:
-            return {}
 
     def get_top_performers(self, player_stats: List[Dict[str, Any]], metric: str = 'acs', top_n: int = 10) -> List[Dict[str, Any]]:
         """Get top performers by specified metric"""

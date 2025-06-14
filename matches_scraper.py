@@ -164,6 +164,16 @@ class MatchesScraper:
 
         return matches
 
+    def _extract_match_id_from_url(self, url: str) -> Optional[str]:
+        """Extract match ID from VLR.gg match URL"""
+        try:
+            match = re.search(r'/(\d+)/', url)
+            if match:
+                return match.group(1)
+            return None
+        except Exception:
+            return None
+
     def _extract_single_match_vlr(self, row, match_date: str) -> Optional[Dict[str, Any]]:
         """Extract data from a single VLR.gg match row using correct selectors"""
         try:
@@ -175,7 +185,10 @@ class MatchesScraper:
             # Get match URL
             href = row.get('href', '')
             if href:
-                match_data['match_url'] = f"https://www.vlr.gg{href}" if href.startswith('/') else href
+                match_url = f"https://www.vlr.gg{href}" if href.startswith('/') else href
+                match_data['match_url'] = match_url
+                # Extract match ID from URL
+                match_data['match_id'] = self._extract_match_id_from_url(match_url)
 
             # Extract time
             time_elem = row.find('div', class_='vm-time')
@@ -268,7 +281,10 @@ class MatchesScraper:
             # Get match URL
             href = container.get('href', '')
             if href:
-                match_data['match_url'] = f"https://www.vlr.gg{href}" if href.startswith('/') else href
+                match_url = f"https://www.vlr.gg{href}" if href.startswith('/') else href
+                match_data['match_url'] = match_url
+                # Extract match ID from URL
+                match_data['match_id'] = self._extract_match_id_from_url(match_url)
 
             # Extract time
             time_elem = container.find('div', class_='match-item-time')

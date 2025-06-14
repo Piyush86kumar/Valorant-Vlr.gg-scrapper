@@ -70,13 +70,19 @@ class MapsAgentsScraper:
             # Extract agents utilization data from the first table
             agents_data = self._extract_agents_data_vlr(soup, progress_callback)
 
+            # Extract match ID from URL
+            match_id = None
+            match = re.search(r'/(\d+)/', main_url)
+            if match:
+                match_id = match.group(1)
+
             result = {
                 'maps': maps_data,
                 'agents': agents_data,
                 'total_maps': len(maps_data),
                 'total_agents': len(agents_data),
                 'scraped_from': agents_url,
-                'scraped_at': datetime.now().isoformat()
+                'match_id': match_id
             }
 
             if progress_callback:
@@ -120,9 +126,7 @@ class MapsAgentsScraper:
             if len(cells) < 4:
                 return None
 
-            map_data = {
-                'scraped_at': datetime.now().isoformat()
-            }
+            map_data = {}
 
             # Column 0: Map name
             map_cell = cells[0]
@@ -164,12 +168,23 @@ class MapsAgentsScraper:
             if not global_table:
                 return []
 
-            # Get agent headers (columns 4 onwards contain agent images)
-            header_row = global_table.find('tr')
-            if not header_row:
+            # Get all rows
+            rows = global_table.find_all('tr')
+            if not rows:
                 return []
 
+            # Get header row to extract map names
+            header_row = rows[0]
             header_cells = header_row.find_all('th')
+            
+            # Extract map names from first 4 columns
+            map_names = []
+            for cell in header_cells[:4]:
+                map_name = cell.get_text(strip=True)
+                if map_name and map_name not in ['Map', '#', 'ATK WIN', 'DEF WIN']:
+                    map_names.append(map_name)
+
+            # Get agent headers (columns 4 onwards contain agent images)
             agent_headers = header_cells[4:]  # Skip first 4 columns (Map, #, ATK WIN, DEF WIN)
 
             # Extract agent names from header images
@@ -196,13 +211,15 @@ class MapsAgentsScraper:
 
                 agent_data = {
                     'agent_name': agent_name,
-                    'scraped_at': datetime.now().isoformat()
+                    'total_utilization': 0.0,
+                    'map_utilizations': {}
                 }
 
-                # Extract total utilization (first row) and individual map utilizations
-                total_utilization_percent = None
-                map_utilizations = []
+                # Initialize map utilizations for each map
+                for map_name in map_names:
+                    agent_data['map_utilizations'][map_name] = 0.0
 
+                # Extract total utilization (first row) and individual map utilizations
                 for row_idx, row in enumerate(data_rows):
                     cells = row.find_all('td')
                     if len(cells) > (4 + i):  # Ensure we have the agent column
@@ -221,7 +238,7 @@ class MapsAgentsScraper:
 
                                     if not map_text or 'mod-all' in row.get('class', []):
                                         # This is the total utilization row
-                                        total_utilization_percent = util_percent
+                                        agent_data['total_utilization'] = util_percent
                                     else:
                                         # This is an individual map row
                                         # Clean map name
@@ -235,53 +252,90 @@ class MapsAgentsScraper:
 
                                         # Only add if map name is not empty
                                         if map_name and map_name.strip():
-                                            map_utilizations.append({
-                                                'map': map_name,
-                                                'utilization_percent': util_percent
-                                            })
+                                            agent_data['map_utilizations'][map_name] = util_percent
                                 except ValueError:
                                     pass
-
-                # Set the data exactly as VLR.gg shows it
-                agent_data['total_utilization_percent'] = total_utilization_percent if total_utilization_percent is not None else 0.0
-                agent_data['map_utilizations'] = map_utilizations
-                agent_data['maps_count'] = len(map_utilizations)
 
                 agents_data.append(agent_data)
 
             return agents_data
 
         except Exception as e:
+            print(f"Error extracting agents data: {str(e)}")
             return []
 
-    def _extract_agent_usage(self, soup: BeautifulSoup, progress_callback: Optional[Callable] = None) -> List[Dict[str, Any]]:
-        """Extract agent usage statistics from the first table"""
-        agent_stats = []
-
-        # Find the first table (agent usage statistics)
-        agents_table = soup.find('table', class_='wf-table-inset')
-        if not agents_table:
-            # Try alternative selectors
-            agents_table = soup.find('table', class_='agents-table')
-            if not agents_table:
-                agents_table = soup.find('table')
-
-        if not agents_table:
-            return []
-
-        # Get table rows
-        rows = agents_table.find_all('tr')
-
-        # Skip header row and process data rows
-        for i, row in enumerate(rows[1:], 1):
-            if progress_callback and i % 10 == 0:
-                progress_callback(f"Processing agent {i}/{len(rows)-1}")
-
-            agent_data = self._extract_agent_row(row)
-            if agent_data:
-                agent_stats.append(agent_data)
-
-        return agent_stats
+    def _extract_agent_usage(self, table) -> Dict[str, Any]:
+        """Extract agent usage statistics from the table"""
+        try:
+            # Get all rows except header
+            rows = table.find_all('tr')[1:]  # Skip header row
+            
+            # Initialize data structure
+            agent_data = {
+                'agent_name': '',
+                'pick_rate': 0.0,
+                'win_rate': 0.0,
+                'map_utilizations': []
+            }
+            
+            # Process each row
+            for row in rows:
+                cells = row.find_all('td')
+                if len(cells) >= 4:  # Ensure we have enough cells
+                    # Extract agent name
+                    agent_name_elem = cells[0].find('div', class_='text-of')
+                    if agent_name_elem:
+                        agent_data['agent_name'] = agent_name_elem.text.strip()
+                    
+                    # Extract pick rate
+                    pick_rate_elem = cells[1].find('div', class_='text-of')
+                    if pick_rate_elem:
+                        pick_rate_text = pick_rate_elem.text.strip().rstrip('%')
+                        try:
+                            agent_data['pick_rate'] = float(pick_rate_text)
+                        except ValueError:
+                            agent_data['pick_rate'] = 0.0
+                    
+                    # Extract win rate
+                    win_rate_elem = cells[2].find('div', class_='text-of')
+                    if win_rate_elem:
+                        win_rate_text = win_rate_elem.text.strip().rstrip('%')
+                        try:
+                            agent_data['win_rate'] = float(win_rate_text)
+                        except ValueError:
+                            agent_data['win_rate'] = 0.0
+                    
+                    # Extract map utilizations
+                    map_utilizations = []
+                    map_cells = cells[3].find_all('div', class_='text-of')
+                    for map_cell in map_cells:
+                        map_text = map_cell.text.strip()
+                        if map_text:
+                            # Extract map name and utilization
+                            parts = map_text.split(' ')
+                            if len(parts) >= 2:
+                                map_name = ' '.join(parts[:-1])  # All parts except the last one
+                                utilization = parts[-1].rstrip('%')
+                                try:
+                                    map_utilizations.append({
+                                        'map_name': map_name,
+                                        'utilization': float(utilization)
+                                    })
+                                except ValueError:
+                                    continue
+                    
+                    agent_data['map_utilizations'] = map_utilizations
+            
+            return agent_data
+            
+        except Exception as e:
+            print(f"Error extracting agent usage: {str(e)}")
+            return {
+                'agent_name': '',
+                'pick_rate': 0.0,
+                'win_rate': 0.0,
+                'map_utilizations': []
+            }
 
     def _extract_agent_row(self, row) -> Optional[Dict[str, Any]]:
         """Extract agent statistics from a table row"""
